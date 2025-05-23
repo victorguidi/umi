@@ -3,8 +3,8 @@ package umi
 import (
 	"net/http"
 
-	"github.com/victorguidi/umi/umi/middleware"
-	"github.com/victorguidi/umi/umi/types"
+	"github.com/victorguidi/umi/middleware"
+	"github.com/victorguidi/umi/types"
 )
 
 type (
@@ -21,9 +21,10 @@ type (
 
 	// Options for Umi
 	UmiOptions struct {
-		PrintRoutes bool
-		LogRequests bool
-		Cors        bool
+		PrintRoutes   bool
+		LogEvents     bool
+		Cors          bool
+		ServerOptions *http.Server
 	}
 
 	// Route holds the info of the registered routes

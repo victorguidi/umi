@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -28,7 +29,7 @@ func Cors(origin, credentials, headers, methods string) Middleware {
 			w.Header().Set("Access-Control-Allow-Headers", headers)
 			w.Header().Set("Access-Control-Allow-Methods", methods)
 
-			if r.Method == "OPTIONS" {
+			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
@@ -40,16 +41,23 @@ func Cors(origin, credentials, headers, methods string) Middleware {
 	return cors
 }
 
-// Defaults to Origin *
+// Defaults to Origin * and allow all methods
 func FlexibleCors() Middleware {
 	cors := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", FLEXIBLE_ORIGIN)
+			requestOrigin := r.Header.Get("Origin")
+			if requestOrigin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", requestOrigin)
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+
 			w.Header().Set("Access-Control-Allow-Credentials", FLEXIBLE_COR_CREDENTIALS)
 			w.Header().Set("Access-Control-Allow-Headers", FLEXIBLE_COR_HEADERS)
 			w.Header().Set("Access-Control-Allow-Methods", FLEXIBLE_COR_METHODS)
 
-			if r.Method == "OPTIONS" {
+			fmt.Println(r.Method)
+			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
@@ -57,7 +65,6 @@ func FlexibleCors() Middleware {
 			next(w, r)
 		}
 	}
-
 	return cors
 }
 

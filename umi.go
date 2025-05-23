@@ -1,18 +1,14 @@
 package umi
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"time"
 
-	"github.com/victorguidi/umi/umi/middleware"
-	"github.com/victorguidi/umi/umi/types"
+	"github.com/victorguidi/umi/middleware"
+	"github.com/victorguidi/umi/types"
 )
-
-func defaultOptions() UmiOptions {
-	return UmiOptions{
-		PrintRoutes: true,
-	}
-}
 
 func (u *Umi) registerRoute(method, path string, handler types.HandlerFunc) {
 	u.routes = append(u.routes, route{
@@ -28,11 +24,21 @@ func (u *Umi) defaultHandler(handler types.HandlerFunc) http.HandlerFunc {
 	middlewares := make([]middleware.Middleware, len(u.middlewares))
 	copy(middlewares, u.middlewares)
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		baseHandler := func(w http.ResponseWriter, r *http.Request) {
 			u.Context = Context{ResponseWriter: w, Request: r}
-			err := handler(u.Context)
+			err := handler(&u.Context)
 			if err != nil {
-				panic(err)
+				if error, ok := err.(types.Error); ok {
+					w.WriteHeader(error.Status)
+					fmt.Fprint(w, err.Error())
+				} else {
+					w.WriteHeader(500)
+					fmt.Fprint(w, err)
+				}
 			}
 		}
 
@@ -53,14 +59,39 @@ func (u *Umi) rebuildRoutes() {
 	}
 }
 
+func defaultOptions() UmiOptions {
+	return UmiOptions{
+		PrintRoutes:   true,
+		LogEvents:     true,
+		Cors:          false,
+		ServerOptions: nil,
+	}
+}
+
+func (u *Umi) withLogger() *Umi {
+	u.middlewares = append(u.middlewares, middleware.Logger())
+	return u
+}
+
 // Creates a new instance of Umi
 func New() *Umi {
-	return &Umi{
-		ServeMux:   http.NewServeMux(),
+	mux := http.NewServeMux()
+	umi := &Umi{
+		ServeMux:   mux,
 		Context:    Context{},
 		UmiOptions: defaultOptions(),
 		routes:     make([]route, 0),
 	}
+
+	if umi.LogEvents {
+		umi.withLogger()
+	}
+
+	if umi.Cors {
+		umi.WithFlexibleCors()
+	}
+
+	return umi
 }
 
 // Allows the user to modify CORS rules,
@@ -79,15 +110,30 @@ func (u *Umi) WithFlexibleCors() *Umi {
 	return u
 }
 
-func (u *Umi) WithLogger() *Umi {
-	u.middlewares = append(u.middlewares, middleware.Logger())
+func (u *Umi) WithOptions(opts UmiOptions) *Umi {
+	u.UmiOptions = opts
+	return u
+}
+
+func (u *Umi) WithServerOptions(opts *http.Server) *Umi {
+	u.ServerOptions = opts
 	return u
 }
 
 func (u *Umi) Start(addr string) {
-	server := &http.Server{
-		Addr:    addr,
-		Handler: u,
+	var server *http.Server
+	if u.ServerOptions != nil {
+		server = u.ServerOptions
+		server.Addr = addr
+		server.Handler = u
+	} else {
+		server = &http.Server{
+			Handler:        u,
+			Addr:           addr,
+			ReadTimeout:    10 * time.Second,
+			WriteTimeout:   10 * time.Second,
+			MaxHeaderBytes: 1 << 20,
+		}
 	}
 
 	if u.PrintRoutes {
@@ -99,7 +145,6 @@ func (u *Umi) Start(addr string) {
 
 	log.Printf("Umi is listening on addr %s", addr)
 	log.Fatal(server.ListenAndServe())
-	// log.Fatal(http.ListenAndServe(addr, u))
 }
 
 func (u *Umi) Use(middleware middleware.Middleware) {
@@ -115,13 +160,7 @@ func (u *Umi) Use(middleware middleware.Middleware) {
 func (u *Umi) GET(path string, handler types.HandlerFunc) {
 	u.registerRoute("GET", path, handler)
 	u.HandleFunc("GET "+path, u.defaultHandler(handler))
-}
-
-// The HEAD method asks for a response identical to a GET request,
-// but without a response body.
-func (u *Umi) HEAD(path string, handler types.HandlerFunc) {
-	u.registerRoute("HEAD", path, handler)
-	u.HandleFunc("", u.defaultHandler(handler))
+	u.HandleFunc("OPTIONS "+path, u.defaultHandler(handler))
 }
 
 // The POST method submits an entity to the specified resource,
@@ -129,6 +168,7 @@ func (u *Umi) HEAD(path string, handler types.HandlerFunc) {
 func (u *Umi) POST(path string, handler types.HandlerFunc) {
 	u.registerRoute("POST", path, handler)
 	u.HandleFunc("POST "+path, u.defaultHandler(handler))
+	u.HandleFunc("OPTIONS "+path, u.defaultHandler(handler))
 }
 
 // The PUT method replaces all current representations of the target
@@ -136,12 +176,28 @@ func (u *Umi) POST(path string, handler types.HandlerFunc) {
 func (u *Umi) PUT(path string, handler types.HandlerFunc) {
 	u.registerRoute("PUT", path, handler)
 	u.HandleFunc("PUT "+path, u.defaultHandler(handler))
+	u.HandleFunc("OPTIONS "+path, u.defaultHandler(handler))
 }
 
 // The DELETE method deletes the specified resource.
 func (u *Umi) DELETE(path string, handler types.HandlerFunc) {
 	u.registerRoute("DELETE", path, handler)
 	u.HandleFunc("DELETE "+path, u.defaultHandler(handler))
+	u.HandleFunc("OPTIONS "+path, u.defaultHandler(handler))
+}
+
+// The PATCH method applies partial modifications to a resource.
+func (u *Umi) PATCH(path string, handler types.HandlerFunc) {
+	u.registerRoute("PATCH", path, handler)
+	u.HandleFunc("PATCH "+path, u.defaultHandler(handler))
+	u.HandleFunc("OPTIONS "+path, u.defaultHandler(handler))
+}
+
+// The HEAD method asks for a response identical to a GET request,
+// but without a response body.
+func (u *Umi) HEAD(path string, handler types.HandlerFunc) {
+	u.registerRoute("HEAD", path, handler)
+	u.HandleFunc("", u.defaultHandler(handler))
 }
 
 // The CONNECT method establishes a tunnel to the server identified by
@@ -163,10 +219,4 @@ func (u *Umi) OPTIONS(path string, handler types.HandlerFunc) {
 func (u *Umi) TRACE(path string, handler types.HandlerFunc) {
 	u.registerRoute("TRACE", path, handler)
 	u.HandleFunc("TRACE "+path, u.defaultHandler(handler))
-}
-
-// The PATCH method applies partial modifications to a resource.
-func (u *Umi) PATCH(path string, handler types.HandlerFunc) {
-	u.registerRoute("PATCH", path, handler)
-	u.HandleFunc("PATCH "+path, u.defaultHandler(handler))
 }
